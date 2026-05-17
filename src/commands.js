@@ -39,7 +39,7 @@ export async function handleLink(interaction) {
 
   if (plan === 'scout' || plan === 'acquirer') {
     return interaction.editReply({
-      content: `⚠️ Discord alerts are available on **Studio ($99/mo)** and **Mogul ($299/mo)** plans.\n\nYour current plan: **${plan.charAt(0).toUpperCase() + plan.slice(1)}**\n\nUpgrade at **rominion.com/pricing** to get gem alerts.`,
+      content: `⚠️ Discord alerts are available on **Studio ($99/mo)** and **Mogul ($299/mo)** plans.\n\nYour current plan: **${plan.charAt(0).toUpperCase() + plan.slice(1)}**\n\nUpgrade at **rominion.xyz/pricing** to get gem alerts.`,
     });
   }
 
@@ -202,7 +202,7 @@ export async function handleWatchlist(interaction) {
     .limit(10);
 
   if (!items?.length) {
-    return interaction.editReply({ content: '⭐ Your watchlist is empty. Visit rominion.com to start saving gems.' });
+    return interaction.editReply({ content: '⭐ Your watchlist is empty. Visit rominion.xyz to start saving gems.' });
   }
 
   const tierEmoji = { Diamond: '💎', Sapphire: '💠', Emerald: '🟢', Raw: '⚪' };
@@ -217,7 +217,7 @@ export async function handleWatchlist(interaction) {
     .setColor(0xF59E0B)
     .setTitle('⭐ Your Watchlist')
     .setDescription(lines.join('\n'))
-    .setFooter({ text: 'Manage your full watchlist at rominion.com' })
+    .setFooter({ text: 'Manage your full watchlist at rominion.xyz' })
     .setTimestamp();
 
   return interaction.editReply({ embeds: [embed] });
