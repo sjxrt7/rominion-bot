@@ -29,7 +29,7 @@ export async function handleLink(interaction) {
 
   if (!match) {
     return interaction.editReply({
-      content: `❌ No RoMinion account found with email \`${email}\`. Sign up at **rominion.com** first.`,
+      content: `❌ No RoMinion account found with email \`${email}\`. Sign up at **rominion.xyz** first.`,
     });
   }
 
