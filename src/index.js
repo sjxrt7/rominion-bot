@@ -1,13 +1,11 @@
 import 'dotenv/config';
-import { Client, GatewayIntentBits, Events, EmbedBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, Events, EmbedBuilder, ActivityType } from 'discord.js';
 import cron from 'node-cron';
 import { runAlertEngine } from './alertEngine.js';
 import { handleLink, handleAlerts, handleGem, handleTop, handleWatchlist, handleUnlink, handleSnipe, handleAnalyze, handleCompare } from './commands.js';
-
 const INTERVAL = parseInt(process.env.ALERT_INTERVAL_MINUTES || '15');
 const WELCOME_CHANNEL = process.env.WELCOME_CHANNEL_NAME || 'general';
 const ALLOWED_GUILD = '1505367255394025663';
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -18,14 +16,13 @@ const client = new Client({
     GatewayIntentBits.GuildPresences,
   ],
 });
-
 client.once(Events.ClientReady, async () => {
   console.log(`✓ RoMinion Bot logged in as ${client.user.tag}`);
   console.log(`  Watching for member joins in guild: ${ALLOWED_GUILD}`);
+  client.user.setActivity('rominion.xyz', { type: ActivityType.Watching });
   await runAlertEngine(client);
   cron.schedule(`*/${INTERVAL} * * * *`, () => runAlertEngine(client));
 });
-
 client.on(Events.GuildMemberAdd, async (member) => {
   console.log(`Member joined: ${member.user.username} in guild ${member.guild.id}`);
   if (member.guild.id !== ALLOWED_GUILD) return;
@@ -43,7 +40,6 @@ client.on(Events.GuildMemberAdd, async (member) => {
     console.log(`Welcome message sent to ${channel.name}`);
   } catch (err) { console.error('Welcome error:', err); }
 });
-
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
   if (interaction.guildId !== ALLOWED_GUILD) {
@@ -68,5 +64,4 @@ client.on(Events.InteractionCreate, async (interaction) => {
     interaction.replied || interaction.deferred ? await interaction.editReply(msg) : await interaction.reply(msg);
   }
 });
-
 client.login(process.env.DISCORD_TOKEN);
