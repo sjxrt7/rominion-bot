@@ -8,18 +8,30 @@ const INTERVAL = parseInt(process.env.ALERT_INTERVAL_MINUTES || '15');
 const WELCOME_CHANNEL = process.env.WELCOME_CHANNEL_NAME || 'general';
 const ALLOWED_GUILD = '1505367255394025663';
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMembers] });
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildPresences,
+  ],
+});
 
 client.once(Events.ClientReady, async () => {
   console.log(`✓ RoMinion Bot logged in as ${client.user.tag}`);
+  console.log(`  Watching for member joins in guild: ${ALLOWED_GUILD}`);
   await runAlertEngine(client);
   cron.schedule(`*/${INTERVAL} * * * *`, () => runAlertEngine(client));
 });
 
 client.on(Events.GuildMemberAdd, async (member) => {
+  console.log(`Member joined: ${member.user.username} in guild ${member.guild.id}`);
   if (member.guild.id !== ALLOWED_GUILD) return;
   try {
     const channel = member.guild.channels.cache.find(c => c.name === WELCOME_CHANNEL && c.isTextBased());
+    console.log(`Welcome channel found: ${channel?.name || 'NOT FOUND'}`);
     if (!channel) return;
     const embed = new EmbedBuilder()
       .setColor(0xF59E0B)
@@ -28,6 +40,7 @@ client.on(Events.GuildMemberAdd, async (member) => {
       .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
       .setFooter({ text: 'Find. Acquire. Dominate. 💎' });
     await channel.send({ content: `${member}`, embeds: [embed] });
+    console.log(`Welcome message sent to ${channel.name}`);
   } catch (err) { console.error('Welcome error:', err); }
 });
 
