@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { Client, GatewayIntentBits, Events, EmbedBuilder } from 'discord.js';
 import cron from 'node-cron';
 import { runAlertEngine } from './alertEngine.js';
-import { handleLink, handleAlerts, handleGem, handleTop, handleWatchlist, handleUnlink } from './commands.js';
+import { handleLink, handleAlerts, handleGem, handleTop, handleWatchlist, handleUnlink, handleSnipe, handleAnalyze, handleCompare } from './commands.js';
 
 const INTERVAL = parseInt(process.env.ALERT_INTERVAL_MINUTES || '15');
 const WELCOME_CHANNEL = process.env.WELCOME_CHANNEL_NAME || 'general';
@@ -45,6 +45,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       case 'top':       await handleTop(interaction); break;
       case 'watchlist': await handleWatchlist(interaction); break;
       case 'unlink':    await handleUnlink(interaction); break;
+      case 'snipe':     await handleSnipe(interaction); break;
+      case 'analyze':   await handleAnalyze(interaction); break;
+      case 'compare':   await handleCompare(interaction); break;
       default: await interaction.reply({ content: '❓ Unknown command.', ephemeral: true });
     }
   } catch (err) {

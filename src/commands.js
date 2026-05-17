@@ -229,3 +229,209 @@ export async function handleUnlink(interaction) {
   await supabase.from('discord_connections').delete().eq('discord_user_id', interaction.user.id);
   return interaction.editReply({ content: '✅ Your Discord has been unlinked from RoMinion.' });
 }
+
+// ── MOGUL GUARD ──────────────────────────────────────────────────
+async function requireMogul(interaction) {
+  const { data: conn } = await supabase
+    .from('discord_connections')
+    .select('plan')
+    .eq('discord_user_id', interaction.user.id)
+    .maybeSingle();
+
+  if (!conn) {
+    await interaction.editReply({ content: '❌ Link your account first with `/link your@email.com`.' });
+    return false;
+  }
+  if (conn.plan !== 'mogul') {
+    await interaction.editReply({
+      content: `👑 This command is exclusive to **Mogul ($299/mo)** subscribers.\n\nUpgrade at [rominion.xyz/pricing](https://rominion.xyz/pricing) to unlock:\n- \`/snipe\` — Best gem right now\n- \`/analyze\` — Deep acquisition report\n- \`/compare\` — Side-by-side game comparison\n- \`/market\` — Market overview\n- Unlimited gem alerts`,
+    });
+    return false;
+  }
+  return true;
+}
+
+// ── /snipe — single best gem RIGHT NOW (Mogul only) ──────────────
+export async function handleSnipe(interaction) {
+  await interaction.deferReply();
+  if (!(await requireMogul(interaction))) return;
+
+  const { data: games } = await supabase
+    .from('games')
+    .select(`*, game_metrics!inner(*)`)
+    .eq('game_metrics.is_hidden_gem', true)
+    .order('game_metrics(gem_score)', { ascending: false })
+    .limit(1);
+
+  const game = games?.[0];
+  if (!game) return interaction.editReply({ content: '❌ No gems indexed yet. Scanner may still be running.' });
+
+  const m = game.game_metrics;
+  const tierEmoji = { Diamond: '💎', Sapphire: '💠', Emerald: '🟢', Raw: '⚪' }[m.gem_tier] || '💎';
+  const colors = { Diamond: 0xF59E0B, Sapphire: 0x3B82F6, Emerald: 0x10B981, Raw: 0x64748B };
+
+  const embed = new EmbedBuilder()
+    .setColor(colors[m.gem_tier] || 0xF59E0B)
+    .setTitle(`👀 SNIPE — Best Gem Right Now`)
+    .setDescription(`This is your highest-opportunity acquisition target at this exact moment. Strike before anyone else.`)
+    .setThumbnail(game.thumbnail_url || null)
+    .addFields(
+      { name: `${tierEmoji} ${game.name}`, value: `by **${game.creator_name || 'Unknown'}** · ${game.creator_type === 'User' ? '👤 Solo Dev' : '🏢 Studio'}`, inline: false },
+      { name: '💎 Gem Score', value: `**${m.gem_score}/100** ${tierEmoji} ${m.gem_tier}`, inline: true },
+      { name: '👥 Live Players', value: `${fmt(m.playing)}`, inline: true },
+      { name: '👁 Total Visits', value: `${fmt(m.visits)}`, inline: true },
+      { name: '💰 Est. Monthly Revenue', value: `$${fmt(m.est_monthly_revenue_low)} – $${fmt(m.est_monthly_revenue_high)}`, inline: true },
+      { name: '💵 Acquisition Price', value: `$${fmt(m.est_acquisition_price_low)} – $${fmt(m.est_acquisition_price_high)}`, inline: true },
+      { name: '🔗 Roblox', value: `[Open game](https://www.roblox.com/games/${game.place_id})`, inline: true },
+    )
+    .setFooter({ text: '👑 Mogul Exclusive · Updates every 15 minutes · RoMinion' })
+    .setTimestamp();
+
+  return interaction.editReply({ embeds: [embed] });
+}
+
+// ── /analyze — deep acquisition report (Mogul only) ──────────────
+export async function handleAnalyze(interaction) {
+  await interaction.deferReply();
+  if (!(await requireMogul(interaction))) return;
+
+  const query = interaction.options.getString('name');
+  const { data: games } = await supabase
+    .from('games')
+    .select(`*, game_metrics(*)`)
+    .ilike('name', `%${query}%`)
+    .not('game_metrics', 'is', null)
+    .order('game_metrics(gem_score)', { ascending: false })
+    .limit(1);
+
+  const game = games?.[0];
+  if (!game) return interaction.editReply({ content: `❌ No game found matching \`${query}\`.` });
+
+  const m = game.game_metrics;
+  const tierEmoji = { Diamond: '💎', Sapphire: '💠', Emerald: '🟢', Raw: '⚪' }[m.gem_tier] || '🎮';
+  const colors = { Diamond: 0xF59E0B, Sapphire: 0x3B82F6, Emerald: 0x10B981, Raw: 0x64748B };
+
+  // Pull 30-day snapshot history
+  const { data: history } = await supabase
+    .from('game_snapshots')
+    .select('playing, visits, recorded_at')
+    .eq('universe_id', game.universe_id)
+    .gte('recorded_at', new Date(Date.now() - 30 * 86400000).toISOString())
+    .order('recorded_at', { ascending: true });
+
+  const peakCCU = history?.length ? Math.max(...history.map(h => h.playing || 0)) : m.playing;
+  const avgCCU = history?.length ? Math.round(history.reduce((a, h) => a + (h.playing || 0), 0) / history.length) : m.playing;
+  const dsu = Math.floor((Date.now() - new Date(game.updated_at).getTime()) / 86400000);
+
+  const activityScore = dsu < 7 ? '🟢 Very Active' : dsu < 30 ? '🟡 Active' : dsu < 90 ? '🟠 Slowing' : '🔴 Inactive';
+  const acquirability = game.creator_type === 'User' ? '🟢 High (Solo Dev)' : '🟡 Medium (Studio)';
+  const likeRatio = m.like_ratio ? `${(m.like_ratio * 100).toFixed(1)}%` : '—';
+  const engRatio = m.engagement_ratio ? `${(m.engagement_ratio * 100).toFixed(2)}%` : '—';
+
+  const embed = new EmbedBuilder()
+    .setColor(colors[m.gem_tier] || 0x64748B)
+    .setTitle(`📊 Deep Analysis — ${game.name}`)
+    .setDescription(`Full acquisition intelligence report. Mogul exclusive. 👑`)
+    .setThumbnail(game.thumbnail_url || null)
+    .addFields(
+      { name: '💎 Gem Score', value: `${m.gem_score}/100 ${tierEmoji} ${m.gem_tier}`, inline: true },
+      { name: '🎯 Genre', value: game.primary_genre || 'Unknown', inline: true },
+      { name: '👤 Creator', value: `${game.creator_name || 'Unknown'} · ${game.creator_type === 'User' ? 'Solo' : 'Studio'}`, inline: true },
+      { name: '👥 Live Now', value: fmt(m.playing), inline: true },
+      { name: '📈 Peak CCU (30d)', value: fmt(peakCCU), inline: true },
+      { name: '📊 Avg CCU (30d)', value: fmt(avgCCU), inline: true },
+      { name: '👁 Total Visits', value: fmt(m.visits), inline: true },
+      { name: '⭐ Favorites', value: fmt(m.favorited_count), inline: true },
+      { name: '❤️ Like Ratio', value: likeRatio, inline: true },
+      { name: '📌 Fav/Visit Ratio', value: engRatio, inline: true },
+      { name: '🔄 Last Updated', value: `${dsu} days ago`, inline: true },
+      { name: '⚡ Dev Activity', value: activityScore, inline: true },
+      { name: '🤝 Acquirability', value: acquirability, inline: false },
+      { name: '💰 Est. Monthly Revenue', value: `$${fmt(m.est_monthly_revenue_low)} – $${fmt(m.est_monthly_revenue_high)}/mo`, inline: true },
+      { name: '💵 Suggested Offer', value: `$${fmt(m.est_acquisition_price_low)} – $${fmt(m.est_acquisition_price_high)}`, inline: true },
+      { name: '🔗 View on Roblox', value: `[Open game](https://www.roblox.com/games/${game.place_id})`, inline: true },
+    )
+    .setFooter({ text: '👑 Mogul Exclusive · RoMinion Deep Analysis' })
+    .setTimestamp();
+
+  return interaction.editReply({ embeds: [embed] });
+}
+
+// ── /compare — side by side comparison (Mogul only) ──────────────
+export async function handleCompare(interaction) {
+  await interaction.deferReply();
+  if (!(await requireMogul(interaction))) return;
+
+  const q1 = interaction.options.getString('game1');
+  const q2 = interaction.options.getString('game2');
+
+  const fetchGame = async (q) => {
+    const { data } = await supabase
+      .from('games')
+      .select(`*, game_metrics(*)`)
+      .ilike('name', `%${q}%`)
+      .not('game_metrics', 'is', null)
+      .order('game_metrics(gem_score)', { ascending: false })
+      .limit(1);
+    return data?.[0] || null;
+  };
+
+  const [g1, g2] = await Promise.all([fetchGame(q1), fetchGame(q2)]);
+
+  if (!g1) return interaction.editReply({ content: `❌ No game found matching \`${q1}\`.` });
+  if (!g2) return interaction.editReply({ content: `❌ No game found matching \`${q2}\`.` });
+
+  const m1 = g1.game_metrics;
+  const m2 = g2.game_metrics;
+
+  const winner = m1.gem_score >= m2.gem_score ? g1.name : g2.name;
+
+  const compare = (val1, val2, higherBetter = true) => {
+    const better = higherBetter ? val1 >= val2 : val1 <= val2;
+    return better ? ['✅', '—'] : ['—', '✅'];
+  };
+
+  const [s1, s2] = compare(m1.gem_score, m2.gem_score);
+  const [p1, p2] = compare(m1.playing, m2.playing);
+  const [v1, v2] = compare(m1.visits, m2.visits);
+  const [e1, e2] = compare(m1.engagement_ratio, m2.engagement_ratio);
+  const [r1, r2] = compare(m1.est_monthly_revenue_high, m2.est_monthly_revenue_high);
+
+  const embed = new EmbedBuilder()
+    .setColor(0xF59E0B)
+    .setTitle(`⚔️ Acquisition Comparison`)
+    .setDescription(`**${g1.name}** vs **${g2.name}**\n\n🏆 Better acquisition target: **${winner}**`)
+    .addFields(
+      { name: '\u200B', value: `**${g1.name}**`, inline: true },
+      { name: '\u200B', value: '**Metric**', inline: true },
+      { name: '\u200B', value: `**${g2.name}**`, inline: true },
+
+      { name: '\u200B', value: `${s1} ${m1.gem_score}/100`, inline: true },
+      { name: '\u200B', value: '💎 Gem Score', inline: true },
+      { name: '\u200B', value: `${s2} ${m2.gem_score}/100`, inline: true },
+
+      { name: '\u200B', value: `${p1} ${fmt(m1.playing)}`, inline: true },
+      { name: '\u200B', value: '👥 Live Players', inline: true },
+      { name: '\u200B', value: `${p2} ${fmt(m2.playing)}`, inline: true },
+
+      { name: '\u200B', value: `${v1} ${fmt(m1.visits)}`, inline: true },
+      { name: '\u200B', value: '👁 Total Visits', inline: true },
+      { name: '\u200B', value: `${v2} ${fmt(m2.visits)}`, inline: true },
+
+      { name: '\u200B', value: `${e1} ${((m1.engagement_ratio||0)*100).toFixed(2)}%`, inline: true },
+      { name: '\u200B', value: '📌 Engagement', inline: true },
+      { name: '\u200B', value: `${e2} ${((m2.engagement_ratio||0)*100).toFixed(2)}%`, inline: true },
+
+      { name: '\u200B', value: `${r1} $${fmt(m1.est_monthly_revenue_high)}/mo`, inline: true },
+      { name: '\u200B', value: '💰 Est. Revenue', inline: true },
+      { name: '\u200B', value: `${r2} $${fmt(m2.est_monthly_revenue_high)}/mo`, inline: true },
+
+      { name: '\u200B', value: `$${fmt(m1.est_acquisition_price_low)}–$${fmt(m1.est_acquisition_price_high)}`, inline: true },
+      { name: '\u200B', value: '💵 Acq. Price', inline: true },
+      { name: '\u200B', value: `$${fmt(m2.est_acquisition_price_low)}–$${fmt(m2.est_acquisition_price_high)}`, inline: true },
+    )
+    .setFooter({ text: '👑 Mogul Exclusive · RoMinion Compare' })
+    .setTimestamp();
+
+  return interaction.editReply({ embeds: [embed] });
+}

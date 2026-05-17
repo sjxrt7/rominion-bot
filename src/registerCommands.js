@@ -1,7 +1,3 @@
-// src/registerCommands.js
-// Run once: `npm run register`
-// Registers all slash commands with Discord globally.
-
 import 'dotenv/config';
 import { REST, Routes, SlashCommandBuilder } from 'discord.js';
 
@@ -20,15 +16,12 @@ const commands = [
     .addSubcommand(s => s
       .setName('types')
       .setDescription('Toggle specific alert types')
-      .addStringOption(o => o
-        .setName('type')
-        .setDescription('Alert type')
-        .setRequired(true)
+      .addStringOption(o => o.setName('type').setDescription('Alert type').setRequired(true)
         .addChoices(
           { name: '💎 New Diamond gems', value: 'alert_new_diamond' },
-          { name: '📈 Gem score increased', value: 'alert_score_change' },
-          { name: '🔥 CCU spike detected', value: 'alert_ccu_spike' },
-          { name: '🆕 New hidden gem found', value: 'alert_new_gem' },
+          { name: '🆕 New hidden gems', value: 'alert_new_gem' },
+          { name: '📈 Score increased', value: 'alert_score_change' },
+          { name: '🔥 CCU spikes', value: 'alert_ccu_spike' },
           { name: '⚠️ Dev going quiet', value: 'alert_dev_slowing' },
         ))
       .addBooleanOption(o => o.setName('enabled').setDescription('On or off').setRequired(true))
@@ -36,12 +29,8 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('gem')
-    .setDescription('Look up a specific Roblox game\'s Gem Score')
-    .addStringOption(o => o.setName('name').setDescription('Game name to search').setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName('watchlist')
-    .setDescription('See your RoMinion watchlist'),
+    .setDescription('Look up a Roblox game\'s Gem Score')
+    .addStringOption(o => o.setName('name').setDescription('Game name').setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('top')
@@ -49,14 +38,35 @@ const commands = [
     .addIntegerOption(o => o.setName('count').setDescription('How many to show (max 10)').setMinValue(1).setMaxValue(10)),
 
   new SlashCommandBuilder()
+    .setName('watchlist')
+    .setDescription('See your RoMinion watchlist'),
+
+  new SlashCommandBuilder()
     .setName('unlink')
-    .setDescription('Unlink your Discord account from RoMinion'),
+    .setDescription('Unlink your Discord from RoMinion'),
+
+  // MOGUL EXCLUSIVE
+  new SlashCommandBuilder()
+    .setName('snipe')
+    .setDescription('👑 Mogul · Best acquisition target right now'),
+
+  new SlashCommandBuilder()
+    .setName('analyze')
+    .setDescription('👑 Mogul · Deep acquisition report for any game')
+    .addStringOption(o => o.setName('name').setDescription('Game name').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('compare')
+    .setDescription('👑 Mogul · Compare two games side by side')
+    .addStringOption(o => o.setName('game1').setDescription('First game name').setRequired(true))
+    .addStringOption(o => o.setName('game2').setDescription('Second game name').setRequired(true)),
+
 ].map(c => c.toJSON());
 
 const rest = new REST().setToken(process.env.DISCORD_TOKEN);
 
 (async () => {
-  console.log('Registering slash commands globally...');
+  console.log('Registering slash commands...');
   await rest.put(Routes.applicationCommands(process.env.DISCORD_CLIENT_ID), { body: commands });
-  console.log('✓ Commands registered. May take up to 1 hour to appear globally.');
+  console.log('✓ Commands registered!');
 })();
