@@ -45,6 +45,21 @@ const commands = [
     .setName('unlink')
     .setDescription('Unlink your Discord from RoMinion'),
 
+  // ADMIN ONLY
+  new SlashCommandBuilder()
+    .setName('genkey')
+    .setDescription('🔐 Admin · Generate a plan activation key')
+    .addStringOption(o => o
+      .setName('plan')
+      .setDescription('Which plan to generate a key for')
+      .setRequired(true)
+      .addChoices(
+        { name: '🔑 Acquirer ($19.99/mo)', value: 'acquirer' },
+        { name: '🏠 Studio ($29.99/mo)', value: 'studio' },
+        { name: '👑 Mogul ($69/mo)', value: 'mogul' },
+      )
+    ),
+
   // MOGUL EXCLUSIVE
   new SlashCommandBuilder()
     .setName('snipe')
