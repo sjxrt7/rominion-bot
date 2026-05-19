@@ -10,12 +10,69 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// Admin Discord user IDs — only these users can use /genkey
+const ADMIN_IDS = (process.env.ADMIN_DISCORD_IDS || '').split(',').map(id => id.trim());
+
 function fmt(n) {
   n = Number(n) || 0;
   if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
   return Math.round(n).toString();
+}
+
+// Generate a random key like RMN-XXXXXX-XXXXXX
+function generateKey() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const seg = (len) => Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  return `RMN-${seg(6)}-${seg(6)}`;
+}
+
+// /genkey — generate a plan key (admin only)
+export async function handleGenKey(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  // Check if user is an admin
+  if (!ADMIN_IDS.includes(interaction.user.id)) {
+    return interaction.editReply({
+      content: '❌ You do not have permission to use this command.',
+    });
+  }
+
+  const plan = interaction.options.getString('plan');
+  const key = generateKey();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days from now (after activation)
+
+  // Store the key in Supabase
+  const { error } = await supabase.from('plan_keys').insert({
+    key,
+    plan,
+    is_used: false,
+    created_at: new Date().toISOString(),
+  });
+
+  if (error) {
+    console.error('Failed to generate key:', error);
+    return interaction.editReply({ content: '⚠️ Failed to generate key. Please try again.' });
+  }
+
+  const planEmoji = { acquirer: '🔑', studio: '🏠', mogul: '👑' }[plan] || '🎟️';
+  const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
+
+  const embed = new EmbedBuilder()
+    .setColor(0xF59E0B)
+    .setTitle(`${planEmoji} Key Generated — ${planLabel} Plan`)
+    .setDescription(`Send this key to the user. It activates a **30-day ${planLabel} plan** from the moment they enter it.`)
+    .addFields(
+      { name: '🔐 Key', value: `\`\`\`${key}\`\`\``, inline: false },
+      { name: '📋 Plan', value: planLabel, inline: true },
+      { name: '⏳ Valid for', value: '30 days after activation', inline: true },
+      { name: '🔂 Single use', value: 'Yes — locked to one account', inline: true },
+    )
+    .setFooter({ text: 'RoMinion Admin · Keep this key secure until delivered' })
+    .setTimestamp();
+
+  return interaction.editReply({ embeds: [embed] });
 }
 
 // /link — connect Discord to RoMinion account
@@ -33,13 +90,19 @@ export async function handleLink(interaction) {
     });
   }
 
-  // Check their plan
-  const { data: profile } = await supabase.from('profiles').select('plan, username').eq('id', match.id).maybeSingle();
-  const plan = profile?.plan || 'scout';
+  // Check their plan and expiry
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('plan, username, plan_expires_at')
+    .eq('id', match.id)
+    .maybeSingle();
 
-  if (plan === 'scout' || plan === 'acquirer') {
+  const plan = profile?.plan || 'free';
+  const expired = profile?.plan_expires_at && new Date(profile.plan_expires_at) < new Date();
+
+  if (plan === 'free' || expired) {
     return interaction.editReply({
-      content: `⚠️ Discord alerts are available on **Studio ($99/mo)** and **Mogul ($299/mo)** plans.\n\nYour current plan: **${plan.charAt(0).toUpperCase() + plan.slice(1)}**\n\nUpgrade at **rominion.xyz/pricing** to get gem alerts.`,
+      content: `⚠️ Discord alerts require an active paid plan.\n\nYour current plan: **${expired ? 'Expired' : 'Free'}**\n\nJoin our Discord and purchase a plan: **discord.gg/2rs4JHtKy8**\nThen enter your key at **rominion.xyz/keycode**`,
     });
   }
 
@@ -51,12 +114,15 @@ export async function handleLink(interaction) {
     guild_id: interaction.guildId,
     channel_id: interaction.channelId,
     plan,
+    alerts_sent_this_week: 0,
+    week_reset_at: new Date().toISOString(),
   });
 
-  const limit = plan === 'mogul' ? 'Unlimited' : '5/week';
+  const limit = plan === 'acquirer' ? '1/week' : 'Unlimited';
+  const planEmoji = { acquirer: '🔑', studio: '🏠', mogul: '👑' }[plan] || '🎟️';
 
   return interaction.editReply({
-    content: `✅ **Linked!** Your Discord is now connected to RoMinion.\n\n💎 **Plan:** ${plan.charAt(0).toUpperCase() + plan.slice(1)}\n📬 **Alert limit:** ${limit}\n\nUse \`/alerts status\` to see your alert settings.`,
+    content: `✅ **Linked!** Your Discord is now connected to RoMinion.\n\n${planEmoji} **Plan:** ${plan.charAt(0).toUpperCase() + plan.slice(1)}\n📬 **Alert limit:** ${limit}\n\nUse \`/alerts status\` to see your alert settings.`,
   });
 }
 
@@ -76,11 +142,12 @@ export async function handleAlerts(interaction) {
   }
 
   if (sub === 'status') {
-    const limit = conn.plan === 'mogul' ? 'Unlimited' : `${conn.alerts_sent_this_week}/5 this week`;
+    const plan = conn.plan || 'free';
+    const limit = plan === 'acquirer' ? `${conn.alerts_sent_this_week}/1 this week` : plan === 'free' ? 'No alerts (free plan)' : 'Unlimited';
     return interaction.editReply({
       content: [
         `**📬 Alert Settings for ${interaction.user.username}**`,
-        `**Plan:** ${conn.plan} · **Alerts sent:** ${limit}`,
+        `**Plan:** ${plan} · **Alerts sent:** ${limit}`,
         ``,
         `💎 New Diamond gems: ${conn.alert_new_diamond ? '✅' : '❌'}`,
         `🆕 New hidden gems: ${conn.alert_new_gem ? '✅' : '❌'}`,
@@ -244,7 +311,7 @@ async function requireMogul(interaction) {
   }
   if (conn.plan !== 'mogul') {
     await interaction.editReply({
-      content: `👑 This command is exclusive to **Mogul ($299/mo)** subscribers.\n\nUpgrade at [rominion.xyz/pricing](https://rominion.xyz/pricing) to unlock:\n- \`/snipe\` — Best gem right now\n- \`/analyze\` — Deep acquisition report\n- \`/compare\` — Side-by-side game comparison\n- \`/market\` — Market overview\n- Unlimited gem alerts`,
+      content: `👑 This command is exclusive to **Mogul ($69/mo)** subscribers.\n\nJoin Discord to purchase: **discord.gg/2rs4JHtKy8**\nThen enter your key at **rominion.xyz/keycode**`,
     });
     return false;
   }
@@ -311,7 +378,6 @@ export async function handleAnalyze(interaction) {
   const tierEmoji = { Diamond: '💎', Sapphire: '💠', Emerald: '🟢', Raw: '⚪' }[m.gem_tier] || '🎮';
   const colors = { Diamond: 0xF59E0B, Sapphire: 0x3B82F6, Emerald: 0x10B981, Raw: 0x64748B };
 
-  // Pull 30-day snapshot history
   const { data: history } = await supabase
     .from('game_snapshots')
     .select('playing, visits, recorded_at')
@@ -383,7 +449,6 @@ export async function handleCompare(interaction) {
 
   const m1 = g1.game_metrics;
   const m2 = g2.game_metrics;
-
   const winner = m1.gem_score >= m2.gem_score ? g1.name : g2.name;
 
   const compare = (val1, val2, higherBetter = true) => {
@@ -405,27 +470,21 @@ export async function handleCompare(interaction) {
       { name: '\u200B', value: `**${g1.name}**`, inline: true },
       { name: '\u200B', value: '**Metric**', inline: true },
       { name: '\u200B', value: `**${g2.name}**`, inline: true },
-
       { name: '\u200B', value: `${s1} ${m1.gem_score}/100`, inline: true },
       { name: '\u200B', value: '💎 Gem Score', inline: true },
       { name: '\u200B', value: `${s2} ${m2.gem_score}/100`, inline: true },
-
       { name: '\u200B', value: `${p1} ${fmt(m1.playing)}`, inline: true },
       { name: '\u200B', value: '👥 Live Players', inline: true },
       { name: '\u200B', value: `${p2} ${fmt(m2.playing)}`, inline: true },
-
       { name: '\u200B', value: `${v1} ${fmt(m1.visits)}`, inline: true },
       { name: '\u200B', value: '👁 Total Visits', inline: true },
       { name: '\u200B', value: `${v2} ${fmt(m2.visits)}`, inline: true },
-
       { name: '\u200B', value: `${e1} ${((m1.engagement_ratio||0)*100).toFixed(2)}%`, inline: true },
       { name: '\u200B', value: '📌 Engagement', inline: true },
       { name: '\u200B', value: `${e2} ${((m2.engagement_ratio||0)*100).toFixed(2)}%`, inline: true },
-
       { name: '\u200B', value: `${r1} $${fmt(m1.est_monthly_revenue_high)}/mo`, inline: true },
       { name: '\u200B', value: '💰 Est. Revenue', inline: true },
       { name: '\u200B', value: `${r2} $${fmt(m2.est_monthly_revenue_high)}/mo`, inline: true },
-
       { name: '\u200B', value: `$${fmt(m1.est_acquisition_price_low)}–$${fmt(m1.est_acquisition_price_high)}`, inline: true },
       { name: '\u200B', value: '💵 Acq. Price', inline: true },
       { name: '\u200B', value: `$${fmt(m2.est_acquisition_price_low)}–$${fmt(m2.est_acquisition_price_high)}`, inline: true },
