@@ -1,6 +1,7 @@
 // src/alertEngine.js
 // Runs every 15 minutes.
 // Checks game_metrics for changes, finds users to notify, fires Discord DMs.
+// Plan system: acquirer = 1 alert/week, studio = unlimited, mogul = unlimited
 
 import { createClient } from '@supabase/supabase-js';
 import {
@@ -17,25 +18,53 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Plan limits: how many alerts per week
+// Plan limits: how many alerts per week (Infinity = unlimited, 0 = none)
 const PLAN_LIMITS = {
-  scout: 0,
-  acquirer: 0,
-  studio: 5,
+  free: 0,
+  acquirer: 1,
+  studio: Infinity,
   mogul: Infinity,
 };
 
-function canSendAlert(connection) {
-  const limit = PLAN_LIMITS[connection.plan] ?? 0;
+// Get the user's current active plan from profiles table via their discord_user_id
+async function getUserPlan(discordUserId) {
+  // First get the user_id from discord_connections
+  const { data: conn } = await supabase
+    .from('discord_connections')
+    .select('user_id')
+    .eq('discord_user_id', discordUserId)
+    .maybeSingle();
+
+  if (!conn?.user_id) return 'free';
+
+  // Then get their plan from profiles, check if it's expired
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('plan, plan_expires_at')
+    .eq('id', conn.user_id)
+    .maybeSingle();
+
+  if (!profile) return 'free';
+
+  // Check if plan has expired
+  if (profile.plan_expires_at && new Date(profile.plan_expires_at) < new Date()) {
+    return 'free'; // plan expired
+  }
+
+  return profile.plan || 'free';
+}
+
+function canSendAlert(plan, alertsSentThisWeek, weekResetAt) {
+  const limit = PLAN_LIMITS[plan] ?? 0;
   if (limit === 0) return false;
   if (limit === Infinity) return true;
 
   // Reset weekly counter if it's been 7 days
-  const resetAt = new Date(connection.week_reset_at);
+  const resetAt = new Date(weekResetAt);
   const daysSinceReset = (Date.now() - resetAt.getTime()) / 86400000;
   if (daysSinceReset >= 7) return true; // will reset in DB before sending
 
-  return connection.alerts_sent_this_week < limit;
+  return alertsSentThisWeek < limit;
 }
 
 async function resetWeeklyCounterIfNeeded(connection) {
@@ -63,23 +92,32 @@ async function alreadyAlerted(discordUserId, universeId, alertType) {
 }
 
 async function logAlert(discordUserId, universeId, alertType) {
-  await supabase.from('alert_log').insert({ discord_user_id: discordUserId, universe_id: universeId, alert_type: alertType });
-  await supabase
+  await supabase.from('alert_log').insert({
+    discord_user_id: discordUserId,
+    universe_id: universeId,
+    alert_type: alertType,
+  });
+  // Increment weekly counter
+  const { data: conn } = await supabase
     .from('discord_connections')
-    .update({ alerts_sent_this_week: supabase.rpc('increment', { x: 1 }) })
-    .eq('discord_user_id', discordUserId);
+    .select('alerts_sent_this_week')
+    .eq('discord_user_id', discordUserId)
+    .maybeSingle();
+  if (conn) {
+    await supabase
+      .from('discord_connections')
+      .update({ alerts_sent_this_week: (conn.alerts_sent_this_week || 0) + 1 })
+      .eq('discord_user_id', discordUserId);
+  }
 }
 
 async function sendDM(client, connection, embed) {
   try {
-    // Try DM channel first, fall back to guild channel
     const channelId = connection.discord_dm_channel_id || connection.channel_id;
     if (!channelId) {
-      // Open a DM directly
       const user = await client.users.fetch(connection.discord_user_id);
       const dm = await user.createDM();
       await dm.send({ embeds: [embed] });
-      // Save the DM channel ID for future use
       await supabase
         .from('discord_connections')
         .update({ discord_dm_channel_id: dm.id })
@@ -98,16 +136,32 @@ async function sendDM(client, connection, embed) {
 export async function runAlertEngine(client) {
   console.log(`[${new Date().toISOString()}] Running alert engine…`);
 
-  // Get all connected users who can receive alerts
+  // Get all connected Discord users
   const { data: connections } = await supabase
     .from('discord_connections')
-    .select('*')
-    .in('plan', ['studio', 'mogul']);
+    .select('*');
 
   if (!connections?.length) {
-    console.log('  No eligible Discord connections.');
+    console.log('  No Discord connections found.');
     return;
   }
+
+  // Filter to users with an active paid plan (check profiles table)
+  const eligibleConnections = [];
+  for (const conn of connections) {
+    const plan = await getUserPlan(conn.discord_user_id);
+    conn.activePlan = plan; // attach plan to connection object
+    if (plan !== 'free') {
+      eligibleConnections.push(conn);
+    }
+  }
+
+  if (!eligibleConnections.length) {
+    console.log('  No users with active paid plans.');
+    return;
+  }
+
+  console.log(`  Found ${eligibleConnections.length} eligible users.`);
 
   // Get current gem metrics (top 200 hidden gems)
   const { data: currentGems } = await supabase
@@ -136,9 +190,13 @@ export async function runAlertEngine(client) {
     const baseline = baselineMap[game.universe_id];
     const isNew = !baseline;
 
-    for (const conn of connections) {
+    for (const conn of eligibleConnections) {
       await resetWeeklyCounterIfNeeded(conn);
-      if (!canSendAlert(conn)) continue;
+
+      // Check plan limit using the active plan from profiles
+      if (!canSendAlert(conn.activePlan, conn.alerts_sent_this_week, conn.week_reset_at)) {
+        continue;
+      }
 
       // ── 💎 NEW DIAMOND GEM ──────────────────────────────────
       if (
@@ -182,7 +240,7 @@ export async function runAlertEngine(client) {
         const oldPlaying = baseline.playing || 0;
         const newPlaying = metrics.playing || 0;
         const pct = oldPlaying > 0 ? (newPlaying - oldPlaying) / oldPlaying : 0;
-        if (pct >= 0.5 && newPlaying >= 20) { // at least 50% spike and meaningful CCU
+        if (pct >= 0.5 && newPlaying >= 20) {
           if (!(await alreadyAlerted(conn.discord_user_id, game.universe_id, 'ccu_spike'))) {
             const sent = await sendDM(client, conn, buildCCUSpikeEmbed(game, metrics, oldPlaying, newPlaying));
             if (sent) await logAlert(conn.discord_user_id, game.universe_id, 'ccu_spike');
@@ -214,5 +272,5 @@ export async function runAlertEngine(client) {
   }));
 
   await supabase.from('gem_score_alerts_baseline').upsert(upserts);
-  console.log(`  Alert engine done. Checked ${currentGems.length} gems for ${connections.length} users.`);
+  console.log(`  Alert engine done. Checked ${currentGems.length} gems for ${eligibleConnections.length} users.`);
 }
