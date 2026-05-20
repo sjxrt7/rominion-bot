@@ -75,6 +75,39 @@ export async function handleGenKey(interaction) {
   return interaction.editReply({ embeds: [embed] });
 }
 
+// Discord role IDs per plan
+const PLAN_ROLES = {
+  scout: '1505649803399397610',
+  acquirer: '1505649049372590171',
+  studio: '1505648979998802122',
+  mogul: '1505648750775763116',
+};
+
+// Assign Discord role based on plan
+async function assignPlanRole(interaction, plan) {
+  try {
+    const guild = interaction.guild;
+    if (!guild) return;
+    const member = await guild.members.fetch(interaction.user.id);
+
+    // Remove all plan roles first
+    for (const roleId of Object.values(PLAN_ROLES)) {
+      if (member.roles.cache.has(roleId)) {
+        await member.roles.remove(roleId).catch(() => {});
+      }
+    }
+
+    // Assign the correct role
+    const roleId = PLAN_ROLES[plan];
+    if (roleId) {
+      const role = guild.roles.cache.get(roleId);
+      if (role) await member.roles.add(role);
+    }
+  } catch (err) {
+    console.error(`Failed to assign role: ${err.message}`);
+  }
+}
+
 // /link — connect Discord to RoMinion account
 export async function handleLink(interaction) {
   await interaction.deferReply({ ephemeral: true });
@@ -100,9 +133,12 @@ export async function handleLink(interaction) {
   const plan = profile?.plan || 'free';
   const expired = profile?.plan_expires_at && new Date(profile.plan_expires_at) < new Date();
 
+  // Assign role regardless of plan (including scout/free)
+  await assignPlanRole(interaction, expired ? 'scout' : plan);
+
   if (plan === 'free' || expired) {
     return interaction.editReply({
-      content: `⚠️ Discord alerts require an active paid plan.\n\nYour current plan: **${expired ? 'Expired' : 'Free'}**\n\nJoin our Discord and purchase a plan: **discord.gg/2rs4JHtKy8**\nThen enter your key at **rominion.xyz/keycode**`,
+      content: `✅ **Linked!** Your Discord account is connected to RoMinion.\n\n⚠️ Your current plan: **${expired ? 'Expired' : 'Free'}**\n\nJoin our Discord and purchase a plan: **discord.gg/2rs4JHtKy8**\nThen enter your key at **rominion.xyz/keycode**`,
     });
   }
 
@@ -122,7 +158,7 @@ export async function handleLink(interaction) {
   const planEmoji = { acquirer: '🔑', studio: '🏠', mogul: '👑' }[plan] || '🎟️';
 
   return interaction.editReply({
-    content: `✅ **Linked!** Your Discord is now connected to RoMinion.\n\n${planEmoji} **Plan:** ${plan.charAt(0).toUpperCase() + plan.slice(1)}\n📬 **Alert limit:** ${limit}\n\nUse \`/alerts status\` to see your alert settings.`,
+    content: `✅ **Linked!** Your Discord is now connected to RoMinion.\n\n${planEmoji} **Plan:** ${plan.charAt(0).toUpperCase() + plan.slice(1)}\n📬 **Alert limit:** ${limit}\n🎭 **Role assigned:** ${plan.charAt(0).toUpperCase() + plan.slice(1)}\n\nUse \`/alerts status\` to see your alert settings.`,
   });
 }
 
