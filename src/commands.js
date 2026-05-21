@@ -97,20 +97,21 @@ export async function handleLink(interaction) {
   await interaction.deferReply({ ephemeral: true });
   const email = interaction.options.getString('email');
 
-  const { data: users } = await supabase.auth.admin.listUsers();
-  const match = users?.users?.find(u => u.email?.toLowerCase() === email.toLowerCase());
+  // Look up user directly from profiles table by email
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('id, plan, username, plan_expires_at')
+    .ilike('email', email.toLowerCase())
+    .maybeSingle();
 
-  if (!match) {
+  if (!profile) {
     return interaction.editReply({
       content: `❌ No RoMinion account found with email \`${email}\`. Sign up at **rominion.xyz** first.`,
     });
   }
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('plan, username, plan_expires_at')
-    .eq('id', match.id)
-    .maybeSingle();
+  // Use profile.id as match.id going forward
+  const match = { id: profile.id };
 
   const plan = profile?.plan || 'free';
   const expired = profile?.plan_expires_at && new Date(profile.plan_expires_at) < new Date();
