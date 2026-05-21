@@ -5,9 +5,16 @@ import { createClient } from '@supabase/supabase-js';
 import { EmbedBuilder } from 'discord.js';
 import { buildTopGemsEmbed } from './alerts.js';
 
+// Lovable Supabase — users, profiles, plan_keys, discord_connections
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+// Your Supabase — games, game_metrics, game_snapshots
+const gamesDb = createClient(
+  process.env.GAMES_SUPABASE_URL,
+  process.env.GAMES_SUPABASE_KEY
 );
 
 // Admin Discord user IDs — only these users can use /genkey
@@ -223,7 +230,7 @@ export async function handleGem(interaction) {
   await interaction.deferReply();
   const query = interaction.options.getString('name');
 
-  const { data: games } = await supabase
+  const { data: games } = await gamesDb
     .from('games')
     .select('*, game_metrics(*)')
     .ilike('name', `%${query}%`)
@@ -268,7 +275,7 @@ export async function handleTop(interaction) {
   await interaction.deferReply();
   const count = interaction.options.getInteger('count') || 5;
 
-  const { data: games } = await supabase
+  const { data: games } = await gamesDb
     .from('games')
     .select('*, game_metrics!inner(*)')
     .eq('game_metrics.is_hidden_gem', true)
@@ -359,7 +366,7 @@ export async function handleSnipe(interaction) {
   await interaction.deferReply();
   if (!(await requireMogul(interaction))) return;
 
-  const { data: games } = await supabase
+  const { data: games } = await gamesDb
     .from('games')
     .select(`*, game_metrics!inner(*)`)
     .eq('game_metrics.is_hidden_gem', true)
@@ -399,7 +406,7 @@ export async function handleAnalyze(interaction) {
   if (!(await requireMogul(interaction))) return;
 
   const query = interaction.options.getString('name');
-  const { data: games } = await supabase
+  const { data: games } = await gamesDb
     .from('games')
     .select(`*, game_metrics(*)`)
     .ilike('name', `%${query}%`)
@@ -414,7 +421,7 @@ export async function handleAnalyze(interaction) {
   const tierEmoji = { Diamond: '💎', Sapphire: '💠', Emerald: '🟢', Raw: '⚪' }[m.gem_tier] || '🎮';
   const colors = { Diamond: 0xF59E0B, Sapphire: 0x3B82F6, Emerald: 0x10B981, Raw: 0x64748B };
 
-  const { data: history } = await supabase
+  const { data: history } = await gamesDb
     .from('game_snapshots')
     .select('playing, visits, recorded_at')
     .eq('universe_id', game.universe_id)
@@ -468,7 +475,7 @@ export async function handleCompare(interaction) {
   const q2 = interaction.options.getString('game2');
 
   const fetchGame = async (q) => {
-    const { data } = await supabase
+    const { data } = await gamesDb
       .from('games')
       .select(`*, game_metrics(*)`)
       .ilike('name', `%${q}%`)
