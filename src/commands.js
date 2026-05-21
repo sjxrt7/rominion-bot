@@ -5,16 +5,9 @@ import { createClient } from '@supabase/supabase-js';
 import { EmbedBuilder } from 'discord.js';
 import { buildTopGemsEmbed } from './alerts.js';
 
-// Lovable Supabase — users, profiles, plan_keys, discord_connections
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-// Your Supabase — games, game_metrics, game_snapshots
-const gamesDb = createClient(
-  process.env.GAMES_SUPABASE_URL,
-  process.env.GAMES_SUPABASE_KEY
 );
 
 // Admin Discord user IDs — only these users can use /genkey
@@ -39,18 +32,13 @@ function generateKey() {
 export async function handleGenKey(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
-  // Check if user is an admin
   if (!ADMIN_IDS.includes(interaction.user.id)) {
-    return interaction.editReply({
-      content: '❌ You do not have permission to use this command.',
-    });
+    return interaction.editReply({ content: '❌ You do not have permission to use this command.' });
   }
 
   const plan = interaction.options.getString('plan');
   const key = generateKey();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days from now (after activation)
 
-  // Store the key in Supabase
   const { error } = await supabase.from('plan_keys').insert({
     key,
     plan,
@@ -97,14 +85,12 @@ async function assignPlanRole(interaction, plan) {
     if (!guild) return;
     const member = await guild.members.fetch(interaction.user.id);
 
-    // Remove all plan roles first
     for (const roleId of Object.values(PLAN_ROLES)) {
       if (member.roles.cache.has(roleId)) {
         await member.roles.remove(roleId).catch(() => {});
       }
     }
 
-    // Assign the correct role
     const roleId = PLAN_ROLES[plan];
     if (roleId) {
       const role = guild.roles.cache.get(roleId);
@@ -120,7 +106,6 @@ export async function handleLink(interaction) {
   await interaction.deferReply({ ephemeral: true });
   const email = interaction.options.getString('email');
 
-  // Look up the user by email in Supabase auth
   const { data: users } = await supabase.auth.admin.listUsers();
   const match = users?.users?.find(u => u.email?.toLowerCase() === email.toLowerCase());
 
@@ -130,7 +115,6 @@ export async function handleLink(interaction) {
     });
   }
 
-  // Check their plan and expiry
   const { data: profile } = await supabase
     .from('profiles')
     .select('plan, username, plan_expires_at')
@@ -140,7 +124,6 @@ export async function handleLink(interaction) {
   const plan = profile?.plan || 'free';
   const expired = profile?.plan_expires_at && new Date(profile.plan_expires_at) < new Date();
 
-  // Assign role regardless of plan (including scout/free)
   await assignPlanRole(interaction, expired ? 'scout' : plan);
 
   if (plan === 'free' || expired) {
@@ -149,7 +132,6 @@ export async function handleLink(interaction) {
     });
   }
 
-  // Upsert the connection
   await supabase.from('discord_connections').upsert({
     user_id: match.id,
     discord_user_id: interaction.user.id,
@@ -230,7 +212,7 @@ export async function handleGem(interaction) {
   await interaction.deferReply();
   const query = interaction.options.getString('name');
 
-  const { data: games } = await gamesDb
+  const { data: games } = await supabase
     .from('games')
     .select('*, game_metrics(*)')
     .ilike('name', `%${query}%`)
@@ -275,7 +257,7 @@ export async function handleTop(interaction) {
   await interaction.deferReply();
   const count = interaction.options.getInteger('count') || 5;
 
-  const { data: games } = await gamesDb
+  const { data: games } = await supabase
     .from('games')
     .select('*, game_metrics!inner(*)')
     .eq('game_metrics.is_hidden_gem', true)
@@ -354,7 +336,7 @@ async function requireMogul(interaction) {
   }
   if (conn.plan !== 'mogul') {
     await interaction.editReply({
-      content: `👑 This command is exclusive to **Mogul ($69/mo)** subscribers.\n\nJoin Discord to purchase: **discord.gg/2rs4JHtKy8**\nThen enter your key at **rominion.xyz/keycode**`,
+      content: `👑 This command is exclusive to **Mogul ($159/mo)** subscribers.\n\nJoin Discord to purchase: **discord.gg/2rs4JHtKy8**\nThen enter your key at **rominion.xyz/keycode**`,
     });
     return false;
   }
@@ -366,7 +348,7 @@ export async function handleSnipe(interaction) {
   await interaction.deferReply();
   if (!(await requireMogul(interaction))) return;
 
-  const { data: games } = await gamesDb
+  const { data: games } = await supabase
     .from('games')
     .select(`*, game_metrics!inner(*)`)
     .eq('game_metrics.is_hidden_gem', true)
@@ -406,7 +388,7 @@ export async function handleAnalyze(interaction) {
   if (!(await requireMogul(interaction))) return;
 
   const query = interaction.options.getString('name');
-  const { data: games } = await gamesDb
+  const { data: games } = await supabase
     .from('games')
     .select(`*, game_metrics(*)`)
     .ilike('name', `%${query}%`)
@@ -421,7 +403,7 @@ export async function handleAnalyze(interaction) {
   const tierEmoji = { Diamond: '💎', Sapphire: '💠', Emerald: '🟢', Raw: '⚪' }[m.gem_tier] || '🎮';
   const colors = { Diamond: 0xF59E0B, Sapphire: 0x3B82F6, Emerald: 0x10B981, Raw: 0x64748B };
 
-  const { data: history } = await gamesDb
+  const { data: history } = await supabase
     .from('game_snapshots')
     .select('playing, visits, recorded_at')
     .eq('universe_id', game.universe_id)
@@ -475,7 +457,7 @@ export async function handleCompare(interaction) {
   const q2 = interaction.options.getString('game2');
 
   const fetchGame = async (q) => {
-    const { data } = await gamesDb
+    const { data } = await supabase
       .from('games')
       .select(`*, game_metrics(*)`)
       .ilike('name', `%${q}%`)
