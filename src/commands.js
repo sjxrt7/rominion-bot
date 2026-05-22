@@ -101,7 +101,7 @@ export async function handleLink(interaction) {
   const { data: profile } = await supabase
     .from('profiles')
     .select('id, plan, username, plan_expires_at')
-    .ilike('email', email.toLowerCase())
+    .eq('email', email.toLowerCase())
     .maybeSingle();
 
   if (!profile) {
