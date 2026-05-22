@@ -104,6 +104,7 @@ export async function handleLink(interaction) {
     .eq('email', email.toLowerCase())
     .maybeSingle();
 
+  console.log('DEBUG email:', email, 'profile:', JSON.stringify(profile));
   if (!profile) {
     return interaction.editReply({
       content: `❌ No RoMinion account found with email \`${email}\`. Sign up at **rominion.xyz** first.`,
