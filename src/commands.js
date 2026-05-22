@@ -96,6 +96,10 @@ async function assignPlanRole(interaction, plan) {
 export async function handleLink(interaction) {
   await interaction.deferReply({ ephemeral: true });
   const email = interaction.options.getString('email');
+  export async function handleLink(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+  const email = interaction.options.getString('email');
+  console.log('SUPABASE URL:', process.env.SUPABASE_URL?.substring(0, 30));
 
   // Look up user directly from profiles table by email
   const { data: profile } = await supabase
